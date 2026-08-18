@@ -12,6 +12,8 @@
   #loginScreen { display: none; height: 100%; align-items: center; justify-content: center; flex-direction: column; padding: 20px; }
   #loginScreen.active { display: flex; }
   #loginScreen h1 { font-size: 32px; margin-bottom: 8px; letter-spacing: -0.02em; font-weight: 700; }
+  #gsiBtnContainer { min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  #gsiBtnContainer > div { display: inline-block; }
   #loginScreen p { color: #78716c; margin-bottom: 28px; text-align: center; }
   .g-btn { display: inline-flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #d6d3d1; color: #1c1917; padding: 12px 20px; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
   .g-btn:hover { background: #fafaf9; }
@@ -95,10 +97,7 @@
 <div id="loginScreen">
   <h1>Slate</h1>
   <p>一塊乾淨嘅寫字板 · 手機同電腦即時同步</p>
-  <button class="g-btn" id="googleLoginBtn">
-    <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-    用 Google 登入
-  </button>
+  <div id="gsiBtnContainer"></div>
   <div id="loginError"></div>
 </div>
 
@@ -141,20 +140,20 @@
   }
 
   const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js');
-  const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } =
+  const { getAuth, GoogleAuthProvider, signInWithCredential, onAuthStateChanged, signOut } =
     await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
   const { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } =
     await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
 
+  const GSI_CLIENT_ID = '629976284574-7ogjisa5btfdntvakugij2tdujrp8ifq.apps.googleusercontent.com';
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
-  const provider = new GoogleAuthProvider();
 
   // ==================== ELEMENTS ====================
   const loginScreen = document.getElementById('loginScreen');
   const appScreen = document.getElementById('app');
-  const googleBtn = document.getElementById('googleLoginBtn');
+  const gsiBtnContainer = document.getElementById('gsiBtnContainer');
   const logoutBtn = document.getElementById('logoutBtn');
   const loginError = document.getElementById('loginError');
   const userName = document.getElementById('userName');
@@ -179,52 +178,69 @@
   let applyingRemote = false;
 
   // ==================== AUTH ====================
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-  googleBtn.addEventListener('click', async () => {
-    loginError.textContent = '';
-    googleBtn.disabled = true;
-    try {
-      if (isMobile) {
-        loginError.textContent = '轉去 Google 登入…';
-        await signInWithRedirect(auth, provider);
-        // page navigates away
-      } else {
-        await signInWithPopup(auth, provider);
-      }
-    } catch (e) {
-      console.error('Sign-in error:', e);
-      googleBtn.disabled = false;
-      if (e.code === 'auth/popup-blocked') {
-        loginError.textContent = '瀏覽器阻擋咗登入視窗';
-      } else if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-        loginError.textContent = '登入取消咗';
-      } else if (e.code === 'auth/unauthorized-domain') {
-        loginError.textContent = '個 domain 未加入 Firebase authorized domains';
-      } else {
-        loginError.textContent = '登入失敗：' + (e.message || e.code);
-      }
-    }
-  });
-
   logoutBtn.addEventListener('click', async () => {
     if (localDirty) await flushSave();
     await signOut(auth);
+    // Disable auto-select so user can pick account again
+    if (window.google?.accounts?.id) {
+      google.accounts.id.disableAutoSelect();
+    }
   });
 
-  // Handle redirect return from Google sign-in (mobile flow)
-  try {
-    loginError.textContent = '正在確認登入…';
-    const result = await getRedirectResult(auth);
-    if (result?.user) {
-      console.log('Redirect sign-in successful:', result.user.email);
-    }
-    loginError.textContent = '';
-  } catch (e) {
-    console.error('Redirect result error:', e);
-    loginError.textContent = '登入回傳失敗：' + (e.message || e.code) +
-      '（iOS Safari 用戶：試下設定 → Safari → 關「阻止跨網站追蹤」）';
+  // ---------- Google Identity Services (bypasses Safari ITP) ----------
+  async function loadGsi() {
+    if (window.google?.accounts?.id) return;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.defer = true;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+      document.head.appendChild(s);
+    });
   }
+
+  async function handleGsiCredential(response) {
+    try {
+      loginError.textContent = '登入中…';
+      const cred = GoogleAuthProvider.credential(response.credential);
+      await signInWithCredential(auth, cred);
+      loginError.textContent = '';
+    } catch (e) {
+      console.error('Firebase signInWithCredential error:', e);
+      loginError.textContent = '登入失敗：' + (e.message || e.code);
+    }
+  }
+
+  async function initGsiButton() {
+    try {
+      await loadGsi();
+      google.accounts.id.initialize({
+        client_id: GSI_CLIENT_ID,
+        callback: handleGsiCredential,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+        use_fedcm_for_prompt: true,
+        ux_mode: 'popup'
+      });
+      gsiBtnContainer.innerHTML = '';
+      google.accounts.id.renderButton(gsiBtnContainer, {
+        theme: 'outline',
+        size: 'large',
+        type: 'standard',
+        text: 'signin_with',
+        shape: 'rectangular',
+        logo_alignment: 'left',
+        width: 260
+      });
+    } catch (e) {
+      console.error('GIS init error:', e);
+      loginError.textContent = '無法載入 Google 登入服務，請重試';
+    }
+  }
+
+  initGsiButton();
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
