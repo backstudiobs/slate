@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Slate</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang HK", "Microsoft JhengHei", sans-serif; background: #f5f5f4; color: #1c1917; overscroll-behavior: none; }
+
+  /* ---------- Login screen ---------- */
+  #loginScreen { display: none; height: 100%; align-items: center; justify-content: center; flex-direction: column; padding: 20px; }
+  #loginScreen.active { display: flex; }
+  #loginScreen h1 { font-size: 32px; margin-bottom: 8px; letter-spacing: -0.02em; font-weight: 700; }
+  #loginScreen p { color: #78716c; margin-bottom: 28px; text-align: center; }
+  .g-btn { display: inline-flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #d6d3d1; color: #1c1917; padding: 12px 20px; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .g-btn:hover { background: #fafaf9; }
+  .g-btn svg { width: 18px; height: 18px; }
+  #loginError { color: #dc2626; margin-top: 14px; font-size: 14px; min-height: 20px; text-align: center; }
+
+  /* ---------- App layout ---------- */
+  #app { display: none; height: 100%; flex-direction: column; }
+  #app.active { display: flex; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #fff; border-bottom: 1px solid #e7e5e4; flex-shrink: 0; }
+  header .title { font-weight: 600; font-size: 15px; margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header button { background: none; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; color: #57534e; font-size: 13px; }
+  header button:hover { background: #f5f5f4; }
+  #statusDot { width: 8px; height: 8px; border-radius: 50%; background: #a8a29e; }
+  #statusDot.saved { background: #16a34a; }
+  #statusDot.saving { background: #f59e0b; }
+  #statusDot.error { background: #dc2626; }
+  #statusText { font-size: 12px; color: #78716c; }
+
+  main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar (tabs list) */
+  #sidebar { width: 240px; background: #fafaf9; border-right: 1px solid #e7e5e4; display: flex; flex-direction: column; flex-shrink: 0; }
+  #sidebarHeader { display: flex; padding: 10px 12px; border-bottom: 1px solid #e7e5e4; gap: 8px; align-items: center; }
+  #sidebarHeader span { font-size: 12px; color: #78716c; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  #newTabBtn { margin-left: auto; background: #1c1917; color: #fff; border: none; width: 24px; height: 24px; border-radius: 6px; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  #tabList { flex: 1; overflow-y: auto; padding: 6px; }
+  .tab-item { display: flex; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; gap: 6px; }
+  .tab-item:hover { background: #f5f5f4; }
+  .tab-item.active { background: #e7e5e4; }
+  .tab-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .tab-item .del { opacity: 0; background: none; border: none; cursor: pointer; color: #78716c; font-size: 16px; padding: 2px 6px; border-radius: 4px; }
+  .tab-item:hover .del { opacity: 1; }
+  .tab-item .del:hover { background: #d6d3d1; color: #dc2626; }
+
+  /* Editor area */
+  #editorWrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #tabNameInput { border: none; padding: 14px 20px; font-size: 18px; font-weight: 600; background: #fff; outline: none; border-bottom: 1px solid #e7e5e4; }
+  #tabNameInput:focus { background: #fafaf9; }
+  #editor { flex: 1; border: none; padding: 20px; font-size: 16px; line-height: 1.7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang HK", "Microsoft JhengHei", sans-serif; resize: none; outline: none; background: #fff; color: #1c1917; }
+  #editor:disabled { background: #fafaf9; color: #a8a29e; }
+
+  #emptyState { flex: 1; display: flex; align-items: center; justify-content: center; color: #a8a29e; font-size: 14px; }
+
+  /* Mobile */
+  #menuBtn { display: none; background: none; border: none; padding: 8px; cursor: pointer; }
+  #menuBtn svg { width: 22px; height: 22px; stroke: #1c1917; }
+
+  @media (max-width: 640px) {
+    #menuBtn { display: block; }
+    #sidebar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 20; transform: translateX(-100%); transition: transform 0.2s ease; width: 80%; max-width: 300px; box-shadow: 2px 0 8px rgba(0,0,0,0.1); }
+    #sidebar.open { transform: translateX(0); }
+    #backdrop { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.3); z-index: 15; }
+    #backdrop.open { display: block; }
+    #editor { font-size: 17px; padding: 16px; }
+    #tabNameInput { font-size: 17px; padding: 12px 16px; }
+  }
+
+  /* Config prompt */
+  #configPrompt { display: none; padding: 24px; max-width: 600px; margin: 40px auto; background: #fff; border: 1px solid #e7e5e4; border-radius: 12px; }
+  #configPrompt.active { display: block; }
+  #configPrompt h2 { margin-bottom: 12px; }
+  #configPrompt p { color: #57534e; margin-bottom: 16px; line-height: 1.6; }
+  #configPrompt code { background: #f5f5f4; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  #configPrompt pre { background: #1c1917; color: #fafaf9; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<!-- ================= CONFIG PROMPT (shown if firebase-config.js missing) ================= -->
+<div id="configPrompt">
+  <h2>需要 Firebase 設定</h2>
+  <p>請跟 <code>README.md</code> 嘅步驟開一個 Firebase project，然後將 config 貼入去 <code>firebase-config.js</code>。</p>
+  <p>如果你已經整咗，請 <b>hard reload</b> (Ctrl+Shift+R / Cmd+Shift+R) 一次先。</p>
+</div>
+
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen">
+  <h1>Slate</h1>
+  <p>一塊乾淨嘅寫字板 · 手機同電腦即時同步</p>
+  <button class="g-btn" id="googleLoginBtn">
+    <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+    用 Google 登入
+  </button>
+  <div id="loginError"></div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app">
+  <header>
+    <button id="menuBtn" title="Menu"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <span class="title" id="userName">Slate</span>
+    <div id="statusDot"></div>
+    <span id="statusText">未載入</span>
+    <button id="logoutBtn">登出</button>
+  </header>
+  <main>
+    <div id="backdrop"></div>
+    <aside id="sidebar">
+      <div id="sidebarHeader">
+        <span>分頁</span>
+        <button id="newTabBtn" title="新增分頁">+</button>
+      </div>
+      <div id="tabList"></div>
+    </aside>
+    <section id="editorWrap">
+      <input id="tabNameInput" type="text" placeholder="分頁名稱" disabled>
+      <textarea id="editor" placeholder="開始打字…（純文字，冇任何隱藏語法）" spellcheck="false" disabled></textarea>
+      <div id="emptyState" style="display:none;">左邊撳「+」新增第一個分頁</div>
+    </section>
+  </main>
+</div>
+
+<!-- Firebase SDKs -->
+<script type="module">
+  // ==================== BOOTSTRAP ====================
+  let firebaseConfig = null;
+  try {
+    const mod = await import('./firebase-config.js');
+    firebaseConfig = mod.firebaseConfig;
+  } catch (e) {
+    document.getElementById('configPrompt').classList.add('active');
+    throw new Error('firebase-config.js 未搵到 - 請跟 README 設定');
+  }
+
+  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js');
+  const { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } =
+    await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
+  const { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } =
+    await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  // ==================== ELEMENTS ====================
+  const loginScreen = document.getElementById('loginScreen');
+  const appScreen = document.getElementById('app');
+  const googleBtn = document.getElementById('googleLoginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const loginError = document.getElementById('loginError');
+  const userName = document.getElementById('userName');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const tabList = document.getElementById('tabList');
+  const newTabBtn = document.getElementById('newTabBtn');
+  const editor = document.getElementById('editor');
+  const tabNameInput = document.getElementById('tabNameInput');
+  const emptyState = document.getElementById('emptyState');
+  const menuBtn = document.getElementById('menuBtn');
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('backdrop');
+
+  // ==================== STATE ====================
+  let currentUser = null;
+  let notesData = { tabs: [] }; // { id, name, content, updatedAt }
+  let activeTabId = null;
+  let unsubscribeSnapshot = null;
+  let saveTimer = null;
+  let localDirty = false;
+  let applyingRemote = false;
+
+  // ==================== AUTH ====================
+  googleBtn.addEventListener('click', async () => {
+    loginError.textContent = '';
+    try {
+      // Use popup on desktop, redirect on mobile
+      if (window.innerWidth <= 640) {
+        await signInWithRedirect(auth, provider);
+      } else {
+        await signInWithPopup(auth, provider);
+      }
+    } catch (e) {
+      loginError.textContent = '登入失敗：' + (e.message || e.code);
+    }
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    if (localDirty) await flushSave();
+    await signOut(auth);
+  });
+
+  try { await getRedirectResult(auth); } catch (e) { /* ignore */ }
+
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      currentUser = user;
+      loginScreen.classList.remove('active');
+      appScreen.classList.add('active');
+      userName.textContent = user.displayName || user.email || 'Slate';
+      subscribeNotes();
+    } else {
+      currentUser = null;
+      appScreen.classList.remove('active');
+      loginScreen.classList.add('active');
+      if (unsubscribeSnapshot) { unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+    }
+  });
+
+  // ==================== DATA ====================
+  function docRef() {
+    return doc(db, 'notes', currentUser.uid);
+  }
+
+  function subscribeNotes() {
+    setStatus('loading', '載入中…');
+    unsubscribeSnapshot = onSnapshot(docRef(), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        notesData = { tabs: Array.isArray(data.tabs) ? data.tabs : [] };
+      } else {
+        notesData = { tabs: [] };
+      }
+      applyingRemote = true;
+      renderTabs();
+      if (!activeTabId && notesData.tabs.length > 0) {
+        setActiveTab(notesData.tabs[0].id);
+      } else if (activeTabId) {
+        // refresh editor if active tab still exists
+        const t = notesData.tabs.find(x => x.id === activeTabId);
+        if (t) {
+          if (document.activeElement !== editor) editor.value = t.content || '';
+          if (document.activeElement !== tabNameInput) tabNameInput.value = t.name || '';
+        } else {
+          activeTabId = notesData.tabs[0]?.id || null;
+          renderEditor();
+        }
+      } else {
+        renderEditor();
+      }
+      applyingRemote = false;
+      setStatus('saved', '已同步');
+    }, (err) => {
+      setStatus('error', '連線錯誤');
+      console.error(err);
+    });
+  }
+
+  async function flushSave() {
+    if (!currentUser) return;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    try {
+      setStatus('saving', '儲存中…');
+      await setDoc(docRef(), { tabs: notesData.tabs, updatedAt: serverTimestamp() }, { merge: false });
+      localDirty = false;
+      setStatus('saved', '已儲存');
+    } catch (e) {
+      setStatus('error', '儲存失敗');
+      console.error(e);
+    }
+  }
+
+  function scheduleSave() {
+    localDirty = true;
+    setStatus('saving', '打緊字…');
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, 1500);
+  }
+
+  function setStatus(kind, text) {
+    statusDot.className = '';
+    statusDot.classList.add(kind);
+    statusText.textContent = text;
+  }
+
+  // ==================== TABS UI ====================
+  function renderTabs() {
+    tabList.innerHTML = '';
+    notesData.tabs.forEach(tab => {
+      const el = document.createElement('div');
+      el.className = 'tab-item' + (tab.id === activeTabId ? ' active' : '');
+      el.innerHTML = `<span class="name"></span><button class="del" title="刪除">×</button>`;
+      el.querySelector('.name').textContent = tab.name || '(未命名)';
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('del')) return;
+        setActiveTab(tab.id);
+        closeSidebar();
+      });
+      el.querySelector('.del').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!confirm(`確定刪除「${tab.name || '(未命名)'}」？`)) return;
+        notesData.tabs = notesData.tabs.filter(t => t.id !== tab.id);
+        if (activeTabId === tab.id) activeTabId = notesData.tabs[0]?.id || null;
+        renderTabs();
+        renderEditor();
+        flushSave();
+      });
+      tabList.appendChild(el);
+    });
+  }
+
+  function renderEditor() {
+    const t = notesData.tabs.find(x => x.id === activeTabId);
+    if (!t) {
+      editor.value = '';
+      editor.disabled = true;
+      tabNameInput.value = '';
+      tabNameInput.disabled = true;
+      emptyState.style.display = notesData.tabs.length === 0 ? 'flex' : 'none';
+      editor.style.display = notesData.tabs.length === 0 ? 'none' : 'block';
+      tabNameInput.style.display = notesData.tabs.length === 0 ? 'none' : 'block';
+      return;
+    }
+    editor.disabled = false;
+    tabNameInput.disabled = false;
+    editor.style.display = 'block';
+    tabNameInput.style.display = 'block';
+    emptyState.style.display = 'none';
+    editor.value = t.content || '';
+    tabNameInput.value = t.name || '';
+  }
+
+  function setActiveTab(id) {
+    if (localDirty) flushSave();
+    activeTabId = id;
+    renderTabs();
+    renderEditor();
+    // On desktop focus the editor for quick typing
+    if (window.innerWidth > 640) setTimeout(() => editor.focus(), 0);
+  }
+
+  newTabBtn.addEventListener('click', () => {
+    const id = 't_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const newTab = { id, name: '新分頁', content: '', updatedAt: Date.now() };
+    notesData.tabs.push(newTab);
+    activeTabId = id;
+    renderTabs();
+    renderEditor();
+    tabNameInput.focus();
+    tabNameInput.select();
+    flushSave();
+  });
+
+  editor.addEventListener('input', () => {
+    if (applyingRemote) return;
+    const t = notesData.tabs.find(x => x.id === activeTabId);
+    if (!t) return;
+    t.content = editor.value;
+    t.updatedAt = Date.now();
+    scheduleSave();
+  });
+
+  tabNameInput.addEventListener('input', () => {
+    if (applyingRemote) return;
+    const t = notesData.tabs.find(x => x.id === activeTabId);
+    if (!t) return;
+    t.name = tabNameInput.value;
+    t.updatedAt = Date.now();
+    renderTabs();
+    scheduleSave();
+  });
+
+  // Save on blur / page leave
+  editor.addEventListener('blur', () => { if (localDirty) flushSave(); });
+  tabNameInput.addEventListener('blur', () => { if (localDirty) flushSave(); });
+  window.addEventListener('beforeunload', (e) => {
+    if (localDirty) { flushSave(); }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && localDirty) flushSave();
+  });
+
+  // Mobile sidebar
+  function openSidebar() { sidebar.classList.add('open'); backdrop.classList.add('open'); }
+  function closeSidebar() { sidebar.classList.remove('open'); backdrop.classList.remove('open'); }
+  menuBtn.addEventListener('click', openSidebar);
+  backdrop.addEventListener('click', closeSidebar);
+
+</script>
+</body>
+</html>
