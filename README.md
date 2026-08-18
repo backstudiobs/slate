@@ -2,171 +2,281 @@
 
 > 一塊乾淨嘅寫字板 · 手機同電腦即時同步
 
-Slate 係一個簡單、純文字、可以喺手機同電腦之間即時同步嘅筆記軟件。
+**Live:** <https://backstudiobs.github.io/slate/>
 
-* **登入方式**：Google 帳號（Firebase Auth）
-* **儲存**：Firestore（免費 quota 已經夠一個人用一世）
-* **打字位**：純 textarea，冇 markdown、冇 rich text、冇隱藏語法
-* **分頁**：側邊 sidebar，可以隨時新增／刪除
-* **同步**：打字停 1.5 秒自動存，另一部機大約 1–2 秒後見到
+一個純文字、跨裝置即時同步嘅筆記軟件。冇 markdown、冇 rich text、冇隱藏語法 —— 就係一塊寫字板，加分頁。
+
+---
+
+## 特色
+
+- **純文字** —— 大 `<textarea>`，打乜見乜，冇任何 formatting 語法
+- **手機／電腦即時同步** —— 停手打字 1.5 秒自動存，另一部機大約 1–2 秒後見到（最壞 8 秒 fallback poll）
+- **分頁** —— 側邊 sidebar，可以新增／改名／刪除；tap 已選中嘅分頁即可 inline 改名
+- **Google 登入** —— 用 Google Identity Services（唔係 Firebase 舊嗰個 popup／redirect），iOS Safari 都登得入
+- **Email whitelist** —— 只有指定 email 可以用，兩層保護（app 層 + Firestore rule 層）
+- **免費 hosting** —— GitHub Pages + Firebase Spark（免費 tier）
+- **一個 HTML 檔** —— 冇 build step，冇 npm，冇 framework。所有 code 喺 `index.html` 入面
+
+---
+
+## 架構
+
+```
+                                     ┌──────────────────────────┐
+                                     │  GitHub Pages            │
+                                     │  backstudiobs.github.io  │
+                                     │  ├── index.html          │
+   ┌───────┐   ┌────────┐            │  └── firebase-config.js  │
+   │  PC   ├──►│Chrome/ ├────────────┤                          │
+   └───────┘   │Safari  │            └──────────────────────────┘
+               └────┬───┘                          │
+   ┌───────┐   ┌────┴───┐                          ▼
+   │Mobile ├──►│Safari  │            ┌──────────────────────────┐
+   └───────┘   │(iOS)   ├────────────►│ Google Identity Services │
+               └────┬───┘             │ (ID token, no redirect)  │
+                    │                 └────────────┬─────────────┘
+                    │                              │
+                    │                              ▼
+                    │                 ┌──────────────────────────┐
+                    │                 │ Firebase Auth            │
+                    │                 │ (signInWithCredential)   │
+                    │                 └────────────┬─────────────┘
+                    │                              │
+                    ▼                              ▼
+             ┌──────────────────────────────────────────┐
+             │ Cloud Firestore                          │
+             │ /notes/{userId}                          │
+             │   { tabs: [{ id, name, content, ...}] }  │
+             └──────────────────────────────────────────┘
+```
+
+**點解用 Google Identity Services，唔用 Firebase 內建 Google Sign-In？**
+Firebase 內建嘅 `signInWithPopup` / `signInWithRedirect` 會經 `<project>.firebaseapp.com/__/auth/handler` 個 domain，iOS Safari 因為 ITP（Intelligent Tracking Prevention）阻擋跨網站 cookie，登完之後攞唔返個 auth session。GIS 直接喺 client 攞 Google ID token（唔涉及第二個 domain），然後 `signInWithCredential` 換 Firebase session，完全繞開 ITP 問題。
 
 ---
 
 ## 檔案結構
 
 ```
-├── index.html                    ← 個 app 本身
-├── firebase-config.js            ← 你自己嘅 Firebase config（自己整）
-├── firebase-config.example.js    ← 範例，畀你抄
-└── README.md                     ← 呢個檔
+Slate/
+├── index.html                    ← 個 app 本體（HTML + CSS + JS 一個檔）
+├── firebase-config.js            ← Firebase project keys（可以 public commit）
+├── firebase-config.example.js    ← 範例，畀 fork 嘅人參考
+├── .gitignore                    ← 排除 node_modules 之類
+├── README.md                     ← 呢個檔
+└── CHANGELOG.md                  ← 版本紀錄
 ```
-
-**重要**：`firebase-config.js` 唔會 auto 生成，你要自己跟下面步驟整。
 
 ---
 
-## 第一部分：整 Firebase project（大約 5 分鐘）
+## Setup from scratch（如果 fork 咗要重新 setup）
 
-### 1. 開 project
+### 需要嘅嘢
+- Google 帳號一個
+- GitHub 帳號一個
+- Mac 或 Linux（Windows 都可，只係下面 shell command 要改）
+- 約 15–20 分鐘
 
-1. 去 <https://console.firebase.google.com/>
-2. 用 Google 帳號登入
-3. 撳 **「Add project」/「新增專案」**
-4. 名任意（例：`my-notes`）
-5. Google Analytics 可以 disable（唔需要）
-6. 撳 **Create project**
+### Step 1 — Firebase project（5 分鐘）
 
-### 2. 開 Web app
+1. 去 <https://console.firebase.google.com/> → **Add project**（Google Analytics 唔洗開）
+2. 入到去撳 **「＋ 新增應用程式」** → 揀 **Web** (`</>`) → nickname 任意 → **唔好** tick Firebase Hosting → **Register app**
+3. 出咗嘅 `firebaseConfig = { ... }` 段 code **抄低**（等下要）
+4. 左邊 **Authentication → Get started → Sign-in method → Google → Enable** → 揀 support email → Save
+5. 左邊 **Firestore Database → Create database** → 揀最近嘅 location（`asia-east1` 台灣 / `asia-east2` 香港）→ **Production mode** → Create
+6. Firestore 頁面頂部 **規則** tab → 貼呢條 rule（**記得改埋 email whitelist**）：
 
-1. 入到 project 之後，撳 **「</>」** 圖示（Web）
-2. App nickname 任意（例：`notes-web`）
-3. **唔好** tick「Firebase Hosting」
-4. 撳 **Register app**
-5. 會出現 `firebaseConfig = { ... }` 呢舊 code —— **抄低成舊嘢**
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /notes/{userId} {
+         allow read, write:
+           if request.auth != null
+           && request.auth.uid == userId
+           && request.auth.token.email_verified == true
+           && request.auth.token.email.lower() in [
+             'your-email@gmail.com',
+             'another@example.com'
+           ];
+       }
+     }
+   }
+   ```
 
-### 3. 開 Google 登入
+   撳 **發布 / Publish**
 
-1. 左邊 sidebar → **Build → Authentication**
-2. 撳 **Get started**
-3. 揀 **Google** → toggle **Enable** → 揀你嘅 support email → **Save**
+### Step 2 — Google OAuth authorized origin
 
-### 4. 開 Firestore
+呢步好重要，唔做嘅話 GIS 會出 `origin_mismatch` 錯誤。
 
-1. 左邊 sidebar → **Build → Firestore Database**
-2. 撳 **Create database**
-3. Location 揀近你嘅（例：`asia-east1` 台灣，最近香港）
-4. **Start in production mode**（我哋會自己寫 rule）
-5. 撳 **Create**
+1. 去 <https://console.cloud.google.com/apis/credentials> → 揀你 Firebase 個 project
+2. 揾嗰個 **Web client (auto created by Google Service)** → 撳個名進去
+3. **已授權的 JavaScript 來源 / Authorized JavaScript origins** → **+ 新增 URI**
+4. 加你嘅 GitHub Pages domain，例如 `https://你github帳號.github.io`
+   - ⚠️ **冇 trailing slash**（唔可以係 `https://.../`）
+   - ⚠️ **要 `https://`**
+5. **儲存 / SAVE**（頁面最底藍色掣）
+6. **等 5 分鐘**（Google 話最多 5 分鐘先生效）
 
-### 5. 貼 security rule（好重要，唔貼會讀寫唔到）
+順便抄低嗰個 **Web Client ID**（樣：`629976xxxxxx-xxxxxx.apps.googleusercontent.com`），等下要貼落 `index.html`。
 
-1. Firestore 個 tab 頂部 → **Rules**
-2. **成個** paste 落去換走原本嘅：
+### Step 3 — 改 `firebase-config.js` 同 `index.html`
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /notes/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-  }
-}
-```
-
-3. 撳 **Publish**
-
-呢條 rule 嘅意思：每個 user 只可以讀寫自己 UID 嘅 document，其他人完全冇 access。
-
-### 6. 將 config 貼入 `firebase-config.js`
-
-1. 將 `firebase-config.example.js` copy 一份，改名做 `firebase-config.js`
-2. 打開嚟改，將第 2 步抄低嗰舊 `firebaseConfig` 貼落去，成個檔應該係咁：
+**`firebase-config.js`** — 將 Step 1.3 抄低嗰段 config 貼入去：
 
 ```js
 export const firebaseConfig = {
-  apiKey: "AIza...你嘅key...",
-  authDomain: "my-notes-xxxxx.firebaseapp.com",
-  projectId: "my-notes-xxxxx",
-  storageBucket: "my-notes-xxxxx.appspot.com",
+  apiKey: "AIza...",
+  authDomain: "your-project.firebaseapp.com",
+  projectId: "your-project",
+  storageBucket: "your-project.firebasestorage.app",
   messagingSenderId: "123456789",
-  appId: "1:123456789:web:abc123def456"
+  appId: "1:123456789:web:abc..."
 };
 ```
 
-> **關於 apiKey 安全**：Firebase 嘅 `apiKey` **公開放上網係 OK** 嘅，佢唔係密碼，只係用嚟認住個 project。真正嘅安全靠上面第 5 步嗰條 Firestore rule。呢個係 Google 官方立場，可以放心 commit 上 public repo。
+> **關於 apiKey 安全**：Firebase apiKey **公開放上網係 OK 嘅**，佢唔係密碼，只係認證個 project。真正安全靠 Firestore rule + email whitelist。呢個係 Google 官方立場，可以放心 commit 上 public repo。
+
+**`index.html`** — 頂部個 script 入面搵呢兩個 constant，改晒佢：
+
+```js
+const GSI_CLIENT_ID = '你嘅Web Client ID.apps.googleusercontent.com';
+const ALLOWED_EMAILS = [
+  'your-email@gmail.com',
+  'another@example.com'
+].map(e => e.toLowerCase());
+```
+
+⚠️ `ALLOWED_EMAILS` 要同 Firestore rule 入面嗰個 list 一樣。兩層都要改。
+
+### Step 4 — GitHub Pages 部署
+
+```bash
+# 開個 empty repo 喺 https://github.com/new (Public)
+cd path/to/Slate
+git init -b main
+git add index.html firebase-config.js README.md CHANGELOG.md .gitignore
+git commit -m "Initial commit"
+git remote add origin https://github.com/你github帳號/slate.git
+git push -u origin main
+```
+
+然後：
+1. Repo Settings → **Pages** → Source: **Deploy from a branch** → Branch: **main** / **/(root)** → Save
+2. 等 30–60 秒，頂部會出網址
+
+### Step 5 — 加 authorized domain 落 Firebase Auth
+
+**注意**：呢步同 Step 2 唔一樣。Step 2 加 origin 落 Google OAuth，呢步加落 Firebase Authentication。
+
+1. Firebase Console → **Authentication → Settings → 已授權網域 / Authorized domains**
+2. **新增網域 / Add domain** → 打 `你github帳號.github.io`（**冇 https://，冇 path**）→ Add
+
+完成！開條 GitHub Pages 網址就用得。
 
 ---
 
-## 第二部分：部署上 GitHub Pages（大約 3 分鐘）
+## 修改配置
 
-### 1. 開 repo
+### 加／減 email whitelist
 
-1. 去 <https://github.com/new>
-2. Repository name：例如 `my-notes`
-3. **Public**（GitHub Pages 免費 plan 需要 public）
-4. **唔好** tick 任何嘢（README/gitignore/license）
-5. 撳 **Create repository**
+**要兩處一齊改**，唔改齊會出鬼問題：
 
-### 2. Upload 檔案
+1. **`index.html`** 頂部個 `ALLOWED_EMAILS` array（app 層檢查）
+2. **Firebase Firestore Rules**（database 層檢查）
 
-**最簡單方法**：直接喺 GitHub 網頁 drag & drop
+### 換 branding
 
-1. 入到新 repo 個頁
-2. 撳 **「uploading an existing file」**
-3. 將 `index.html`、`firebase-config.js`、`README.md` 三個檔 drag 落去
-4. 撳 **Commit changes**
+- Title、副標題喺 `index.html` 個 `#loginScreen` section
+- Header title 喺 `#userName` element（登入前顯示 "Slate"，登入後顯示 user 個名）
+- Colors 喺頂部 `<style>` tag（用嘅係 stone / warm gray）
 
-（**唔好** upload `firebase-config.example.js`，或者 upload 都無所謂——反正真正個 config 冇秘密。）
+### 加新分頁 features
 
-### 3. 開 Pages
+所有 tab logic 喺 `renderTabs()` 同 `startInlineRename()` 兩個 function。
 
-1. Repo 頂 → **Settings** → 左邊 **Pages**
-2. **Source**：`Deploy from a branch`
-3. **Branch**：`main`（folder：`/root`）
-4. 撳 **Save**
-5. 等 30 秒–1 分鐘，佢會俾條網址你，例如：
-   `https://你嘅githubuser.github.io/my-notes/`
+### 加自動 backup／export
 
-### 4. 加 authorized domain 落 Firebase（重要！）
-
-Firebase 預設只信 `localhost` 同 `你project.firebaseapp.com`。要加你嘅 GitHub Pages domain：
-
-1. Firebase Console → **Authentication → Settings → Authorized domains**
-2. 撳 **Add domain**
-3. 打 `你嘅githubuser.github.io`（**冇 https://，冇 path**）
-4. 撳 **Add**
-
-搞掂！開條 GitHub Pages 網址 → 撳「用 Google 登入」→ 就可以用喇。
+`notesData.tabs` 係一個 array of `{ id, name, content, updatedAt }` 嘅 object，可以 `JSON.stringify` 落 download link 做 export。
 
 ---
 
-## 用法
+## Deployment / 更新流程
 
-* **新增分頁**：左邊 sidebar 撳「＋」
-* **改分頁名**：撳上面條 input
-* **打字**：中間大嗰個位，純 plain text
-* **刪除分頁**：hover 過個分頁名就會見到 ×
-* **手機**：撳左上角三條線開 sidebar
-* **同步**：停手打字 1.5 秒自動存，另一部機幾秒後 refresh 就見到
+改完 code 之後：
 
-登入之後，喺任何裝置用**同一個 Google 帳號**登入，睇到嘅內容都係一樣。
+```bash
+cd ~/AIProjects/Slate
+git add -A
+git commit -m "描述改咩"
+git push
+```
+
+推完 30–60 秒 GitHub Pages 就 rebuild。用之前**hard reload**（Chrome/Safari：Cmd+Shift+R）先睇到最新版。
 
 ---
 
-## Troubleshooting
+## Troubleshooting / 常見問題
 
-**「需要 Firebase 設定」個 screen 一直出現**
-→ `firebase-config.js` 未整好，或者名打錯咗。confirm 檔名 exact，同埋 hard reload（Ctrl+Shift+R）
+### 「登入失敗：origin_mismatch」
 
-**「登入失敗：auth/unauthorized-domain」**
-→ 上面第二部分第 4 步冇做，去 Firebase → Authentication → Settings → Authorized domains 加你個 `.github.io` domain
+Google Cloud Console 個 OAuth client 未加你嘅 GitHub Pages domain 落 Authorized JavaScript Origins。返 Setup **Step 2** 做。已加咗但仲係 error → 等 5 分鐘 + Safari 完全 close app 再開。
 
-**「連線錯誤」或者「儲存失敗」**
-→ 通常係 Firestore rule 未 publish。返去 Firebase → Firestore → Rules，confirm 條 rule 同上面第一部分第 5 步一樣，撳 Publish
+### 「登入失敗：auth/unauthorized-domain」
 
-**手機 Google 登入 popup 出唔到**
-→ 個 app 喺手機會自動用 redirect 代替 popup，如果 Chrome 阻擋咗就要 allow 個 site
+Firebase Auth 未加你嘅 GitHub Pages domain 落 Authorized Domains。返 Setup **Step 5** 做。
 
-**想睇下 raw data**
-→ Firebase Console → Firestore → `notes` collection → 揀你嘅 UID
+### 「你嘅 email 冇權限使用呢個 app」
+
+你個 email 唔喺 `ALLOWED_EMAILS` list 度。改 `index.html` 加你個 email，記得 Firestore rule 都加。
+
+### iOS Safari 撳登入冇反應／登入完轉返 login page
+
+如果你用緊 Firebase 舊嘅 `signInWithPopup` / `signInWithRedirect`，換做 GIS（見架構解釋）。而家個版本已經用 GIS 應該冇呢問題。
+
+### 手機 → PC sync 快，PC → 手機 sync 慢
+
+iOS Safari throttle 咗 Firestore realtime listener。而家個版本已經加咗 8 秒 fallback poll + visibility/focus 觸發 refetch，最壞 8 秒內見到。如果覺得慢可以將 `setInterval(..., 8000)` 改細個數字（例如 3000）。
+
+### Git commit / push 唔到，話 `.git/HEAD.lock` exists
+
+之前 Terminal 有個 git 未完成留低 lock file。跑：
+
+```bash
+rm -f .git/HEAD.lock .git/index.lock .git/objects/*/tmp_obj_*
+```
+
+之後再 commit / push。
+
+### 分頁改名冇反應
+
+Tap 嘅要係**已經 highlight 咗嘅 active tab**，先會變 input mode。如果 tap 未 active 嘅分頁，會 switch 過去。
+
+---
+
+## Tech stack
+
+- **Frontend**: 一個 HTML 檔，vanilla JS，冇 framework／build step
+- **Auth**: Google Identity Services + Firebase Auth (`signInWithCredential`)
+- **Database**: Cloud Firestore (realtime + 8s fallback poll)
+- **Hosting**: GitHub Pages (免費)
+- **Storage cost**: Firebase Spark tier — 每日 50k reads / 20k writes / 1GB storage 免費
+- **Actual usage**: 1 PC + 1 mobile tab 開住 = 大約 21k reads/day（未計 write），有一半 buffer
+
+---
+
+## Limitations
+
+- **只支援 plain text**：冇 markdown 渲染、冇圖、冇 attachment
+- **冇 offline mode**：冇 network 就寫唔到（Firestore 有 IndexedDB persistence 可以加，但暫時未實作）
+- **冇 conflict resolution**：兩部機同時改同一個分頁，遲寫嘅覆蓋早寫嘅（last-write-wins per document）—— 對於個人筆記通常唔係問題
+- **每個 user 一個 document**：所有分頁塞喺一個 Firestore document 度。Firestore document max 1MB，即係總 note 內容加起嚟唔可以超過 ~1MB（大約 500,000 中文字，普通用完全夠）
+- **冇搜尋**：如果分頁多，要自己 Ctrl+F browser 搜（未加全 tab 搜尋）
+
+---
+
+## 授權
+
+MIT。fork、改、再 host 悉隨尊便。
