@@ -146,6 +146,11 @@
     await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
 
   const GSI_CLIENT_ID = '629976284574-7ogjisa5btfdntvakugij2tdujrp8ifq.apps.googleusercontent.com';
+  // Only these emails can use the app — add/remove entries as needed
+  const ALLOWED_EMAILS = [
+    'cf@gbroland.com',
+    'yoyochannn0731@gmail.com'
+  ].map(e => e.toLowerCase());
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
@@ -244,6 +249,14 @@
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
+      const email = (user.email || '').toLowerCase();
+      if (!ALLOWED_EMAILS.includes(email)) {
+        // Not in whitelist — sign out and show error
+        loginError.textContent = `${user.email} 冇權限使用呢個 app`;
+        try { await signOut(auth); } catch (e) {}
+        if (window.google?.accounts?.id) google.accounts.id.disableAutoSelect();
+        return;
+      }
       currentUser = user;
       loginScreen.classList.remove('active');
       appScreen.classList.add('active');
