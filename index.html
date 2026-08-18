@@ -44,9 +44,11 @@
   .tab-item:hover { background: #f5f5f4; }
   .tab-item.active { background: #e7e5e4; }
   .tab-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .tab-item .rename-input { flex: 1; border: 1px solid #78716c; border-radius: 4px; padding: 2px 6px; font-size: 14px; font-family: inherit; background: #fff; outline: none; min-width: 0; }
   .tab-item .del { opacity: 0; background: none; border: none; cursor: pointer; color: #78716c; font-size: 16px; padding: 2px 6px; border-radius: 4px; }
-  .tab-item:hover .del { opacity: 1; }
+  .tab-item:hover .del, .tab-item.active .del { opacity: 1; }
   .tab-item .del:hover { background: #d6d3d1; color: #dc2626; }
+  .tab-item .hint { font-size: 10px; color: #a8a29e; margin-left: 4px; }
 
   /* Editor area */
   #editorWrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -177,17 +179,31 @@
   let applyingRemote = false;
 
   // ==================== AUTH ====================
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
   googleBtn.addEventListener('click', async () => {
     loginError.textContent = '';
+    googleBtn.disabled = true;
     try {
-      // Use popup on desktop, redirect on mobile
-      if (window.innerWidth <= 640) {
+      if (isMobile) {
+        loginError.textContent = '轉去 Google 登入…';
         await signInWithRedirect(auth, provider);
+        // page navigates away
       } else {
         await signInWithPopup(auth, provider);
       }
     } catch (e) {
-      loginError.textContent = '登入失敗：' + (e.message || e.code);
+      console.error('Sign-in error:', e);
+      googleBtn.disabled = false;
+      if (e.code === 'auth/popup-blocked') {
+        loginError.textContent = '瀏覽器阻擋咗登入視窗';
+      } else if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+        loginError.textContent = '登入取消咗';
+      } else if (e.code === 'auth/unauthorized-domain') {
+        loginError.textContent = '個 domain 未加入 Firebase authorized domains';
+      } else {
+        loginError.textContent = '登入失敗：' + (e.message || e.code);
+      }
     }
   });
 
@@ -196,7 +212,19 @@
     await signOut(auth);
   });
 
-  try { await getRedirectResult(auth); } catch (e) { /* ignore */ }
+  // Handle redirect return from Google sign-in (mobile flow)
+  try {
+    loginError.textContent = '正在確認登入…';
+    const result = await getRedirectResult(auth);
+    if (result?.user) {
+      console.log('Redirect sign-in successful:', result.user.email);
+    }
+    loginError.textContent = '';
+  } catch (e) {
+    console.error('Redirect result error:', e);
+    loginError.textContent = '登入回傳失敗：' + (e.message || e.code) +
+      '（iOS Safari 用戶：試下設定 → Safari → 關「阻止跨網站追蹤」）';
+  }
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
@@ -235,8 +263,22 @@
         // refresh editor if active tab still exists
         const t = notesData.tabs.find(x => x.id === activeTabId);
         if (t) {
-          if (document.activeElement !== editor) editor.value = t.content || '';
-          if (document.activeElement !== tabNameInput) tabNameInput.value = t.name || '';
+          // Update editor from remote, preserving cursor if focused.
+          // Skip only when user has unsaved local edits (localDirty),
+          // otherwise remote updates should always apply.
+          if (!localDirty && editor.value !== (t.content || '')) {
+            const wasFocused = document.activeElement === editor;
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            editor.value = t.content || '';
+            if (wasFocused) {
+              const len = editor.value.length;
+              editor.setSelectionRange(Math.min(start, len), Math.min(end, len));
+            }
+          }
+          if (!localDirty && tabNameInput.value !== (t.name || '')) {
+            tabNameInput.value = t.name || '';
+          }
         } else {
           activeTabId = notesData.tabs[0]?.id || null;
           renderEditor();
@@ -284,13 +326,20 @@
     tabList.innerHTML = '';
     notesData.tabs.forEach(tab => {
       const el = document.createElement('div');
-      el.className = 'tab-item' + (tab.id === activeTabId ? ' active' : '');
+      const isActive = tab.id === activeTabId;
+      el.className = 'tab-item' + (isActive ? ' active' : '');
       el.innerHTML = `<span class="name"></span><button class="del" title="刪除">×</button>`;
       el.querySelector('.name').textContent = tab.name || '(未命名)';
       el.addEventListener('click', (e) => {
         if (e.target.classList.contains('del')) return;
-        setActiveTab(tab.id);
-        closeSidebar();
+        if (e.target.classList.contains('rename-input')) return;
+        if (isActive) {
+          // Tap active tab = enter inline rename mode
+          startInlineRename(el, tab);
+        } else {
+          setActiveTab(tab.id);
+          closeSidebar();
+        }
       });
       el.querySelector('.del').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -303,6 +352,42 @@
       });
       tabList.appendChild(el);
     });
+  }
+
+  function startInlineRename(el, tab) {
+    const nameSpan = el.querySelector('.name');
+    if (!nameSpan) return; // already renaming
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-input';
+    input.value = tab.name || '';
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+    let committed = false;
+    const commit = () => {
+      if (committed) return;
+      committed = true;
+      const newName = input.value.trim();
+      tab.name = newName || '(未命名)';
+      tab.updatedAt = Date.now();
+      renderTabs();
+      if (tabNameInput && activeTabId === tab.id) tabNameInput.value = tab.name;
+      scheduleSave();
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      renderTabs();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
   }
 
   function renderEditor() {
