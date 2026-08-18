@@ -142,7 +142,7 @@
   const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js');
   const { getAuth, GoogleAuthProvider, signInWithCredential, onAuthStateChanged, signOut } =
     await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
-  const { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } =
+  const { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp } =
     await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
 
   const GSI_CLIENT_ID = '629976284574-7ogjisa5btfdntvakugij2tdujrp8ifq.apps.googleusercontent.com';
@@ -473,9 +473,57 @@
   window.addEventListener('beforeunload', (e) => {
     if (localDirty) { flushSave(); }
   });
+
+  // Force-refresh from server (iOS Safari throttles realtime listeners)
+  async function forceRefresh() {
+    if (!currentUser || localDirty) return;
+    try {
+      const snap = await getDoc(docRef());
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const newTabs = Array.isArray(data.tabs) ? data.tabs : [];
+      if (JSON.stringify(newTabs) === JSON.stringify(notesData.tabs)) return;
+      notesData = { tabs: newTabs };
+      applyingRemote = true;
+      renderTabs();
+      const t = notesData.tabs.find(x => x.id === activeTabId);
+      if (t) {
+        if (editor.value !== (t.content || '')) {
+          const wasFocused = document.activeElement === editor;
+          const start = editor.selectionStart;
+          const end = editor.selectionEnd;
+          editor.value = t.content || '';
+          if (wasFocused) {
+            const len = editor.value.length;
+            editor.setSelectionRange(Math.min(start, len), Math.min(end, len));
+          }
+        }
+        if (tabNameInput.value !== (t.name || '')) tabNameInput.value = t.name || '';
+      } else if (notesData.tabs.length > 0) {
+        activeTabId = notesData.tabs[0].id;
+        renderEditor();
+      } else {
+        renderEditor();
+      }
+      applyingRemote = false;
+      setStatus('saved', '已同步');
+    } catch (e) { console.error('forceRefresh failed:', e); }
+  }
+
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && localDirty) flushSave();
+    if (document.hidden) {
+      if (localDirty) flushSave();
+    } else {
+      forceRefresh();
+    }
   });
+  window.addEventListener('focus', forceRefresh);
+  window.addEventListener('pageshow', forceRefresh);
+
+  // Safety-net poll every 8s while tab is visible (in case realtime listener stalls)
+  setInterval(() => {
+    if (!document.hidden) forceRefresh();
+  }, 8000);
 
   // Mobile sidebar
   function openSidebar() { sidebar.classList.add('open'); backdrop.classList.add('open'); }
